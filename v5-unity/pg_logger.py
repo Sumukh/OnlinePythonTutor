@@ -160,7 +160,9 @@ def __restricted_import__(*args):
   # subclass str and bypass the 'in' test on the next line
   args = [e for e in args if type(e) is str]
 
-  if args[0] in ALLOWED_STDLIB_MODULE_IMPORTS + CUSTOM_MODULE_IMPORTS + OTHER_STDLIB_WHITELIST:
+  whitelisted_imports = ALLOWED_STDLIB_MODULE_IMPORTS + CUSTOM_MODULE_IMPORTS + OTHER_STDLIB_WHITELIST
+
+  if args[0] in whitelisted_imports:
     imported_mod = BUILTIN_IMPORT(*args)
 
     if args[0] in CUSTOM_MODULE_IMPORTS:
@@ -259,9 +261,9 @@ BANNED_BUILTINS = ['reload', 'open', 'compile',
                    'file', 'eval', 'exec', 'execfile',
                    'exit', 'quit', 'help',
                    'dir', 'globals', 'locals', 'vars']
-# Peter says 'apply' isn't dangerous, so don't ban it
 
-IGNORE_VARS = set(('__builtins__', '__name__', '__exception__', '__doc__', '__package__'))
+IGNORE_VARS = set(('__builtins__', '__name__', '__exception__', '__doc__', '__package__',
+                   '__file__', '__loader__', '__spec__', '__cached__'))
 
 
 '''
@@ -444,8 +446,8 @@ class PGLogger(bdb.Bdb):
     # if separate_stdout_by_module, then have a separate stdout stream
     # for each module rather than all stdout going to a single stream
     def __init__(self, cumulative_mode, heap_primitives, show_only_outputs, finalizer_func,
-                 disable_security_checks=False, crazy_mode=False,
-                 custom_modules=None, separate_stdout_by_module=False):
+                 disable_security_checks=False, crazy_mode=False, custom_modules=None,
+                 separate_stdout_by_module=False, extra_modules=None):
         bdb.Bdb.__init__(self)
         self.mainpyfile = ''
         self._wait_for_mainpyfile = 0
@@ -457,11 +459,17 @@ class PGLogger(bdb.Bdb):
 
         # Key: module name
         # Value: module's python code as a string
-        self.custom_modules = custom_modules
-        if self.custom_modules:
-            for module_name in self.custom_modules:
-                self.modules_to_trace.add(module_name)
+        self.custom_modules = custom_modules or dict()
+        for module_name in self.custom_modules:
+            self.modules_to_trace.add(module_name)
 
+        # extra_modules is like custom_modules but not imported ahead of time
+        # Only makes sense to enable when disable_security_checks is True
+        self.extra_modules = extra_modules or dict()
+        for module_name in self.extra_modules:
+          self.modules_to_trace.add(module_name)
+
+        # if True, disable all import restrictions and resource limits.
         self.disable_security_checks = disable_security_checks
 
         # if True, then displays ALL stack frames that have ever existed
@@ -784,6 +792,10 @@ class PGLogger(bdb.Bdb):
                 module_code = self.custom_modules[topframe_module]
                 module_code_lines = module_code.splitlines() # TODO: maybe pre-split lines?
                 func_line = module_code_lines[first_lineno-1]
+            elif topframe_module in self.extra_modules:
+                module_code = self.extra_modules[topframe_module]
+                module_code_lines = module_code.splitlines()
+                func_line = module_code_lines[first_lineno-1]
             else:
                 # you're hosed
                 func_line = ''
@@ -1085,7 +1097,7 @@ class PGLogger(bdb.Bdb):
         # merge zombie_encoded_stack_locals and encoded_stack_locals
         # into one master ordered list using some simple rules for
         # making it look aesthetically pretty
-        stack_to_render = [];
+        stack_to_render = []
 
         # first push all regular stack entries
         if encoded_stack_locals:
@@ -1286,11 +1298,12 @@ class PGLogger(bdb.Bdb):
             builtin_items.append((k, getattr(__builtins__, k)))
 
         for (k, v) in builtin_items:
-          if k == 'open': # put this before BANNED_BUILTINS
+          # set open before BANNED_BUILTINS
+          if k == 'open' and not self.disable_security_checks:
             user_builtins[k] = open_wrapper
-          elif k in BANNED_BUILTINS:
+          elif k in BANNED_BUILTINS and not self.disable_security_checks:
             user_builtins[k] = create_banned_builtins_wrapper(k)
-          elif k == '__import__':
+          elif k == '__import__' and not self.disable_security_checks:
             user_builtins[k] = __restricted_import__
           else:
             if k == 'raw_input':
@@ -1305,7 +1318,6 @@ class PGLogger(bdb.Bdb):
               user_builtins[k] = v
 
         user_builtins['mouse_input'] = mouse_input_wrapper
-
         # TODO: we can disable these imports here, but a crafty user can
         # always get a hold of them by importing one of the external
         # modules, so there's no point in trying security by obscurity
@@ -1315,9 +1327,8 @@ class PGLogger(bdb.Bdb):
 
         if self.separate_stdout_by_module:
           self.stdout_by_module["__main__"] = StringIO.StringIO()
-          if self.custom_modules:
-            for module_name in self.custom_modules:
-              self.stdout_by_module[module_name] = StringIO.StringIO()
+          for module_name in self.custom_modules:
+            self.stdout_by_module[module_name] = StringIO.StringIO()
           self.stdout_by_module["<other>"] = StringIO.StringIO() # catch-all for all other modules we're NOT tracing
           sys.stdout = self.stdout_by_module["<other>"] # start with <other>
         else:
@@ -1335,12 +1346,11 @@ class PGLogger(bdb.Bdb):
 
         # if there are custom_modules, 'import' them into user_globals,
         # which emulates "from <module> import *"
-        if self.custom_modules:
-            for mn in self.custom_modules:
-                # http://code.activestate.com/recipes/82234-importing-a-dynamically-generated-module/
-                new_m = imp.new_module(mn)
-                exec(self.custom_modules[mn], new_m.__dict__) # exec in custom globals
-                user_globals.update(new_m.__dict__)
+        for mn in self.custom_modules:
+            # http://code.activestate.com/recipes/82234-importing-a-dynamically-generated-module/
+            new_m = imp.new_module(mn)
+            exec(self.custom_modules[mn], new_m.__dict__) # exec in custom globals
+            user_globals.update(new_m.__dict__)
 
         # important: do this LAST to get precedence over values in custom_modules
         user_globals.update({"__name__"    : "__main__",
@@ -1524,10 +1534,12 @@ def exec_script_str(script_str, raw_input_lst_json, options_json, finalizer_func
 # disables security check and returns the result of finalizer_func
 # WARNING: ONLY RUN THIS LOCALLY and never over the web, since
 # security checks are disabled
-def exec_script_str_local(script_str, raw_input_lst_json, cumulative_mode, heap_primitives, finalizer_func):
+def exec_script_str_local(script_str, raw_input_lst_json, cumulative_mode, heap_primitives, finalizer_func,
+                          disable_security_checks=False, extra_modules=None, custom_modules=None):
   # TODO: add py_crazy_mode option here too ...
-  logger = PGLogger(cumulative_mode, heap_primitives, False, finalizer_func, disable_security_checks=True)
-
+  logger = PGLogger(cumulative_mode, heap_primitives, False, finalizer_func,
+                    disable_security_checks=disable_security_checks,
+                    extra_modules=extra_modules, custom_modules=custom_modules)
   # TODO: refactor these NOT to be globals
   global input_string_queue
   input_string_queue = []
