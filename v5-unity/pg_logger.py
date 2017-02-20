@@ -261,6 +261,7 @@ BANNED_BUILTINS = ['reload', 'open', 'compile',
                    'file', 'eval', 'exec', 'execfile',
                    'exit', 'quit', 'help',
                    'dir', 'globals', 'locals', 'vars']
+# Peter says 'apply' isn't dangerous, so don't ban it
 
 IGNORE_VARS = set(('__builtins__', '__name__', '__exception__', '__doc__', '__package__',
                    '__file__', '__loader__', '__spec__', '__cached__'))
