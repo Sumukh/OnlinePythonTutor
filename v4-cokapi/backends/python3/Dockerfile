@@ -1,10 +1,10 @@
 # Python3 Visualizer for unrestricted inputs
 
 # to build:
-# docker build -t="pgbovine/cokapi-py3:v1" .
-#
+# Use the make file
+# $ make
 # to test:
-# docker run -t -i --rm --user=netuser --net=none --cap-drop all pgbovine/cokapi-py3:v1 sh run_tests.sh
+# $ make test
 
 FROM python:3.6-slim
 # Alpine Linux causes issues with imports in the setup :(
