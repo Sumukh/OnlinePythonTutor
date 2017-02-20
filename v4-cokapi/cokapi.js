@@ -59,7 +59,7 @@ var CPP_TIMEOUT_SECS = 15; // the C/C++ backend is also SUPER SLOW :/
 var MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 
 var MEM_LIMIT = "512M";
-
+var DOCKER_LOCATION = '/usr/bin/docker';
 
 // bind() res and useJSONP before using
 function postExecHandler(res, useJSONP, err, stdout, stderr) {
@@ -127,7 +127,7 @@ function exec_js_handler(useJSONP /* use bind first */, isTypescript /* use bind
   var args = [];
 
   // must match the docker setup in backends/javascript/Dockerfile
-  exeFile = '/usr/bin/docker'; // absolute path to docker executable
+  exeFile = DOCKER_LOCATION; // absolute path to docker executable
   args.push('run', '-m', MEM_LIMIT, '--rm', '--user=netuser', '--net=none', '--cap-drop', 'all', 'pgbovine/cokapi-js:v1',
             '/tmp/javascript/node-v6.0.0-linux-x64/bin/node', // custom Node.js version
             '--expose-debug-as=Debug',
@@ -181,7 +181,7 @@ function exec_java_handler(useJSONP /* use bind first */, req, res) {
   var inputObjJSON = JSON.stringify(inputObj);
 
   // must match the docker setup in backends/java/Dockerfile
-  exeFile = '/usr/bin/docker'; // absolute path to docker executable
+  exeFile = DOCKER_LOCATION; // absolute path to docker executable
   args.push('run', '-m', MEM_LIMIT, '--rm', '--user=netuser', '--net=none', '--cap-drop', 'all', 'pgbovine/cokapi-java:v1',
             '/tmp/run-java-backend.sh',
             inputObjJSON);
@@ -208,7 +208,7 @@ function exec_ruby_handler(useJSONP /* use bind first */, req, res) {
   var args = [];
 
   // must match the docker setup in backends/ruby/Dockerfile
-  exeFile = '/usr/bin/docker'; // absolute path to docker executable
+  exeFile = DOCKER_LOCATION; // absolute path to docker executable
   args.push('run', '-m', MEM_LIMIT, '--rm', '--user=netuser', '--net=none', '--cap-drop', 'all', 'pgbovine/cokapi-ruby:v1',
             '/tmp/ruby/ruby',
             '/tmp/ruby/pg_logger.rb',
@@ -239,7 +239,7 @@ function exec_cpp_handler(useCPP /* use bind first */, useJSONP /* use bind firs
   var args = [];
 
   // this needs to match the docker setup in opt-cpp-backend/Dockerfile (in the https://github.com/pgbovine/opt-cpp-backend repo)
-  exeFile = '/usr/bin/docker'; // absolute path to docker executable
+  exeFile = DOCKER_LOCATION; // absolute path to docker executable
   args.push('run', '-m', MEM_LIMIT, '--rm', '--user=netuser', '--net=none', '--cap-drop', 'all', 'pgbovine/opt-cpp-backend:v1',
             'python',
             '/tmp/opt-cpp-backend/run_cpp_backend.py',
@@ -248,6 +248,37 @@ function exec_cpp_handler(useCPP /* use bind first */, useJSONP /* use bind firs
 
   child_process.execFile(exeFile, args,
                          {timeout: CPP_TIMEOUT_SECS * 1000 /* milliseconds */,
+                          maxBuffer: MAX_BUFFER_SIZE,
+                          // make SURE docker gets the kill signal;
+                          // this signal seems to allow docker to clean
+                          // up after itself to --rm the container, but
+                          // double-check with 'docker ps -a'
+                          killSignal: 'SIGINT'},
+                         postExecHandler.bind(null, res, useJSONP));
+}
+
+app.get('/exec_py3', exec_py3_handler.bind(null, false));
+app.get('/exec_py3_jsonp', exec_py3_handler.bind(null, true));
+
+function exec_py3_handler(useJSONP /* use bind first */, req, res) {
+  var setupJson = {};
+  setupJson["user-script"] = req.query.user_script;
+  setupJson["extra-files"] = req.query.extra_files || {};
+  setupJson.setup = req.query.setup || '';
+
+  var exeFile;
+  var args = [];
+
+  // must match the docker setup in backends/python3/Dockerfile
+  exeFile = DOCKER_LOCATION; // absolute path to docker executable
+  args.push('run', '-m', MEM_LIMIT, '--rm', '--user=netuser', '--net=none', '--cap-drop', 'all', 'pgbovine/cokapi-py3:v1',
+            'python',
+            'generate_trace.py',
+            '--json',
+            JSON.stringify(setupJson));
+
+  child_process.execFile(exeFile, args,
+                         {timeout: TIMEOUT_SECS * 1000 /* milliseconds */,
                           maxBuffer: MAX_BUFFER_SIZE,
                           // make SURE docker gets the kill signal;
                           // this signal seems to allow docker to clean
