@@ -23,4 +23,5 @@ def bar(x):
 }
 
 if __name__ == "__main__":
-    print(shlex.quote(json.dumps(data)))
+    args = shlex.quote(json.dumps(data)
+    print("python generate_trace.py --json '{args}'".format(args=args))
