@@ -49,10 +49,13 @@ def run_logger(source, setup, modules=None):
                                            custom_modules={'pg_setup': setup},
                                            extra_modules=modules)
 
-def setup_input_json(json_str):
+def trace_json(json_str):
     forbidden_files = ('pg_logger.py', 'pg_encoder.py', 'generate_trace.py')
     data = json.loads(json_str)
+    if 'user-script' not in data:
+        raise ValueError("user-script not in data")
     source, setup = data['user-script'], data.get('setup', '')
+    extra_files = data.get('extra-files', {})
     modules = {}
 
     for filename, contents in data['extra-files'].items():
@@ -70,4 +73,4 @@ def setup_input_json(json_str):
     return run_logger(source, setup, modules)
 
 if __name__ == "__main__":
-    print(setup_input_json(options.user_code))
+    print(trace_json(options.user_code))
